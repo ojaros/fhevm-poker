@@ -34,6 +34,7 @@ const chainIds = {
   "polygon-mainnet": 137,
   "polygon-mumbai": 80001,
   sepolia: 11155111,
+  // "localfhenix": 5432,
 };
 
 function getChainConfig(chain: keyof typeof chainIds): NetworkUserConfig {
@@ -45,6 +46,8 @@ function getChainConfig(chain: keyof typeof chainIds): NetworkUserConfig {
     case "bsc":
       jsonRpcUrl = "https://bsc-dataseed1.binance.org";
       break;
+    // case "localfhenix":
+    //   jsonRpcUrl = "https://fhenode.fhenix.io/new/evm"
     default:
       jsonRpcUrl = "https://" + chain + ".infura.io/v3/" + infuraApiKey;
   }
@@ -97,6 +100,7 @@ const config: HardhatUserConfig = {
       accounts: { mnemonic, path: "m/44'/60'/0'/0" },
       chainId: 5432,
       url: "http://localhost:8545",
+      // url: "https://fhenode.fhenix.io/new/evm",
     },
     hardhat: {
       accounts: {
@@ -127,7 +131,7 @@ const config: HardhatUserConfig = {
     tests: "./test",
   },
   solidity: {
-    version: "0.8.17",
+    version: "0.8.19",
     settings: {
       metadata: {
         // Not including the metadata hash

@@ -5,6 +5,8 @@ pragma solidity >=0.8.13 <0.9.0;
 import "fhevm/abstracts/EIP712WithModifier.sol";
 import "fhevm/lib/TFHE.sol";
 import "hardhat/console.sol";
+import {IERC20} from "../interfaces/IERC20.sol";
+
 
 contract Poker is EIP712WithModifier {
 
@@ -13,14 +15,9 @@ contract Poker is EIP712WithModifier {
     }
 
     address public owner;
-    //mapping(uint8 => euint8) deck;
-    euint8 count;
-    uint8 countPlain;
+    // euint8 count;
+    // uint8 countPlain;
 
-
-    euint8[] public deck;
-    mapping(address => euint8[]) players;
-    address[] playersArray;
 
     enum TableState {
         Active,
@@ -35,9 +32,9 @@ contract Poker is EIP712WithModifier {
         Fold
     }
 
-    event NewTableCreated(Table table);
+    event NewTableCreated(uint tableId, Table table);
     event NewBuyIn(uint tableId, address player, uint amount);
-    event CardsDealt(PlayerCardHashes[] PlayerCardHashes, uint tableId);
+    event PlayerCardsDealt(PlayerCardsEncrypted[] PlayerCardsEncrypted, uint tableId);
     event RoundOver(uint tableId, uint round);
     event CommunityCardsDealt(uint tableId, uint roundId, uint8[] cards);
     event TableShowdown(uint tableId);
@@ -60,30 +57,41 @@ contract Poker is EIP712WithModifier {
         uint highestChip; // current highest chip to be called
         uint[] chips; // array of chips each player has put in, compared with highestChip to see if player has to call again
     }
-    // struct PlayerCardHashes {
-    //     bytes32 card1Hash;
-    //     bytes32 card2Hash;
-    // }
-    struct PlayerCards {
+    struct PlayerCardsEncrypted {
+        euint8 card1Encrypted;
+        euint8 card2Encrypted;
+    }
+    struct PlayerCardsPlainText {
         uint8 card1;
         uint8 card2;
     }
 
 
-    Table public existingTable;
-    bool public isTableInitialized = false;
+    // bool public isTableInitialized = false;
+    uint public totalTables;
 
-    //keeps track of remaining chips of a player in a table.... player => remainingChips
-    mapping(address => uint) public playerChips;
+    // id => Table
+    mapping(uint => Table) public tables;
 
-    // player => handNum => PlayerCards;
-    mapping(address => mapping(uint => PlayerCards)) public playerCardsDuringHand;
+    // each tableId maps to a deck
+    // tableId => deck
+    mapping(uint => euint8[]) public decks;
+
+    // mapping(address => euint8[]) players;
+
+    //keeps track of remaining chips of a player in a table.... player => tableId => remainingChips
+    mapping(address => mapping(uint => uint)) public playerChipsRemaining;
+
+    // player => tableId => handNum => PlayerCards;
+    mapping(address => mapping(uint => mapping(uint => PlayerCardsEncrypted))) public playerCardsEncryptedDuringHand;
 
     // maps roundNum to Round
-    mapping(uint => Round) public rounds;
+    // tableId => roundNum => Round
+    mapping(uint => mapping(uint => Round)) public rounds;
 
     // array of community cards
-    uint8[] public communityCards;
+    // tableId => int[8] community cards
+    mapping(uint => uint8[]) public communityCards;
 
 
     /// @dev Initialize the table, this should only be called once
@@ -92,11 +100,10 @@ contract Poker is EIP712WithModifier {
     /// @param _bigBlind The big blind amount for the table
     /// @param _token The token used to bet in this table
     function initializeTable(uint _buyInAmount, uint _maxPlayers, uint _bigBlind, address _token) external {
-        require(!isTableInitialized, "Table already initialized");
 
         address [] memory empty;
 
-        existingTable = Table({
+        tables[totalTables] = Table({
             state: TableState.Inactive,
             totalHands: 0,
             currentRound: 0,
@@ -108,51 +115,52 @@ contract Poker is EIP712WithModifier {
             token: IERC20(_token)
         });
 
-        isTableInitialized = true;
-        emit NewTableCreated(existingTable);
+        emit NewTableCreated(totalTables, tables[totalTables]);
+
+        totalTables += 1;
     }
 
     /// @dev a player can call to withdraw their chips from the table
-    function withdrawChips(uint _amount) external {
-        require(playerChips[msg.sender] >= _amount, "Not enough balance");
-        playerChips[msg.sender] -= _amount;
-        require(existingTable.token.transfer(msg.sender, _amount));
+    /// @param _tableId the unique id of the table
+    /// @param _amount The amount of tokens to withdraw from the table. (must be >= player's balance)
+    function withdrawChips(uint _tableId, uint _amount) external {
+        require(playerChipsRemaining[msg.sender][_tableId] >= _amount, "Not enough balance");
+        playerChipsRemaining[msg.sender][_tableId] -= _amount;
+        require(tables[_tableId].token.transfer(msg.sender, _amount));
     }
 
 
     /// @dev players have to call this to buy ina nd enter the table
+    /// @param _tableId the unique id of the table
     /// @param _amount The amount of tokens to buy in the table. (must be >= min table buy in amount)
     /// TODO: add logic to allow existing player at table to re-buy in
-    function buyIn(uint _amount) public {
-        require(isTableInitialized, "Table has not been initialized");
+    function buyIn(uint _tableId, uint _amount) public {
+        Table storage table = tables[_tableId];
 
-        Table storage table = existingTable;
-
-        require(_amount >= existingTable.buyInAmount, "Not enough buyInAmount");
-        require(existingTable.players.length < existingTable.maxPlayers, "Table is full");
+        require(_amount >= table.buyInAmount, "Not enough buyInAmount");
+        require(table.players.length < table.maxPlayers, "Table is full");
 
         // transfer player's buy in to contract
-        require(existingTable.token.transferFrom(msg.sender, address(this), _amount));
-        playerChips[msg.sender] += _amount;
+        require(table.token.transferFrom(msg.sender, address(this), _amount));
+        playerChipsRemaining[msg.sender][_tableId] += _amount;
 
         // add player to the table
-        existingTable.players.push(msg.sender);
+        table.players.push(msg.sender);
 
         emit NewBuyIn(_tableId, msg.sender, _amount);
     }
 
 
-    function dealCards() public {
-        Table storage table = existingTable;
+    function dealCards(uint _tableId) public {
+        Table storage table = tables[_tableId];
         uint numOfPlayers = table.players.length;
-
         require(table.state == TableState.Inactive, "Game already going on");
         require(numOfPlayers > 1, "ERROR : not enough players");
         table.state = TableState.Active;
 
-        setDeal(2 * numOfPlayers + 5); // assuming 2 cards per player and 5 community cards
+        setDeal(_tableId, 2 * numOfPlayers + 5); // assuming 2 cards per player and 5 community cards
 
-        Round storage round = rounds[0];
+        Round storage round = rounds[_tableId][0];
 
         round.state = true;
         round.players = table.players;
@@ -161,61 +169,59 @@ contract Poker is EIP712WithModifier {
         for (uint i = 0; i < numOfPlayers; i++) {
             if (i == (numOfPlayers - 1)) { // last player, small blind
                 round.chips[i] = table.bigBlind / 2;
-                playerChips[round.players[i]] -= table.bigBlind / 2;
+                playerChipsRemaining[round.players[i]][_tableId] -= table.bigBlind / 2;
             } else if (i == (numOfPlayers - 2)) { // second to last player, big blind
                 round.chips[i] = table.bigBlind;
-                playerChips[round.players[i]] -= table.bigBlind;
+                playerChipsRemaining[round.players[i]][_tableId] -= table.bigBlind;
             }
 
             // Save the encrypted card for each player
-            PlayerCards memory playerCards;
-            playerCards.card1 = deck[2 * i];
-            playerCards.card2 = deck[2 * i + 1];
-            playerCardsDuringHand[table.players[i]][table.totalHands] = playerCards;
+            PlayerCardsEncrypted[] memory playerCardsEncrypted;
+            // console.log("Player ", numOfPlayers , " Deck: ", decks[_tableId]);
+            playerCardsEncrypted[i].card1Encrypted = decks[_tableId][2 * i];
+            playerCardsEncrypted[i].card2Encrypted = decks[_tableId][2 * i + 1];
+            playerCardsEncryptedDuringHand[table.players[i]][_tableId][table.totalHands] = playerCardsEncrypted[i];
+            // console.log("Player Cards Encrypted: ", playerCardsEncrypted);
+
+            emit PlayerCardsDealt(playerCardsEncrypted, _tableId); // emit encrypted player cards
         }
 
         table.pot += table.bigBlind + (table.bigBlind / 2);
-        // emit CardsDealt(_playerCards); // emit encrypted player cards
 
     }
 
 
-    function checkDuplication(euint8 _card) internal view returns (euint8) {
+    function checkDuplication(euint8 _card, uint _tableId) internal view returns (euint8) {
         euint8 total;
-        for (uint8 i = 0; i < deck.length; i++) {
-            ebool duplicate = TFHE.eq(deck[i], _card);
+        for (uint8 i = 0; i < decks[_tableId].length; i++) {
+            ebool duplicate = TFHE.eq(decks[_tableId][i], _card);
             total = TFHE.add(total, TFHE.cmux(duplicate, TFHE.asEuint8(1), TFHE.asEuint8(0)));
         }
         return total;
     }
 
-    function dealCard() public {
-
-        Table storage table = existingTable;
-
-
+    function dealCard(uint _tableId) public {
         euint8 card = TFHE.randEuint8();
-        if (deck.length == 0) {
-            deck.push(card);
-        } else if (TFHE.decrypt(checkDuplication(card)) == 0) {
-            deck.push(card);
+        if (decks[_tableId].length == 0) {
+            decks[_tableId].push(card);
+        } else if (TFHE.decrypt(checkDuplication(card, _tableId)) == 0) {
+            decks[_tableId].push(card);
         }
     }
 
-    function setDeal(uint8 n) public { //this count is 2n + 5 
-        for (uint8 i = 0; i < n; i++) {
-            dealCard();
+    function setDeal(uint _tableId, uint256 n) public { //this count is 2n + 5 
+        for (uint256 i = 0; i < n; i++) {
+            dealCard(_tableId);
         }
     } 
 
 
      /// @param _raiseAmount only required in case of raise. Else put zero. This is the amount you are putting in addition to what you have already put in this round
-    function playHand(PlayerAction _action, uint _raiseAmount) external {
-        Table storage table = existingTable;
+    function playHand(uint _tableId, PlayerAction _action, uint _raiseAmount) external {
+        Table storage table = tables[_tableId];
         require(table.state == TableState.Active, "No active round");
 
-        Round storage round = rounds[table.currentRound];
-        print(round);
+        Round storage round = rounds[_tableId][table.currentRound];
         require(round.players[round.turn] == msg.sender, "Not your turn");
 
         if (_action == PlayerAction.Call) {
@@ -226,12 +232,24 @@ contract Poker is EIP712WithModifier {
 
             uint callAmount = round.highestChip - round.chips[round.turn];
 
-            chips[msg.sender] -= callAmount;
+            playerChipsRemaining[msg.sender][_tableId] -= callAmount;
             table.pot += callAmount;
+
         } else if (_action == PlayerAction.Raise) {
-            // add raise logic
-        } else if (__action == PlayerAction.Check) {
+            // in case of raising
+            // deduct chips from the player's account
+            // add those chips to the pot
+            // update the highestChip for the round
+            uint totalAmount = _raiseAmount + round.chips[round.turn];
+            require(totalAmount > round.highestChip, "Raise amount not enough");
+            require(playerChipsRemaining[msg.sender][_tableId] >= _raiseAmount);
+            playerChipsRemaining[msg.sender][_tableId] -= _raiseAmount;
+            table.pot += _raiseAmount;
+            round.highestChip = totalAmount;
+
+        } else if (_action == PlayerAction.Check) {
             // add check logic
+            
         } else if (_action == PlayerAction.Fold) {
             // in case of folding
             /// remove the player from the players & chips array for this round
@@ -241,37 +259,17 @@ contract Poker is EIP712WithModifier {
     }
 
 
-    function showdown(PlayerCards[] memory _cards) external onlyOwner {
+    function showdown(PlayerCardsPlainText[] memory _cards) external {
         // figure out showdown logic
     }
 
     /// @dev method called to update the community cards for the next round
     /// @param _cards Code of each card(s), (as per the PokerHandUtils Library)
-    function dealCommunityCards(uint _roundId, uint8[] memory _cards) external onlyOwner {
+    function dealCommunityCards(uint _tableId, uint _roundId, uint8[] memory _cards) external {
         for (uint i=0; i<_cards.length; i++) {
-            communityCards.push(_cards[i]);
+            communityCards[_tableId].push(_cards[i]);
         }
         emit CommunityCardsDealt(_tableId, _roundId, _cards);
-    }
-
-    function getDeck() public view returns (euint8[] memory) {
-        return deck;
-    }
-
-    function getDeckLength() public view returns (uint) {
-        return deck.length;
-    }
-
-    function joinGame() public {
-        players[msg.sender].push(deck[deck.length - 2]);
-        players[msg.sender].push(deck[deck.length - 1]);
-    }
-
-    function checkFirstCard(bytes32 publicKey, bytes calldata signature) public view onlySignedPublicKey(publicKey, signature) returns (bytes memory) {
-        return  TFHE.reencrypt(players[msg.sender][0], publicKey, 0);
-    }
-    function checkSecondCard(bytes32 publicKey, bytes calldata signature) public view onlySignedPublicKey(publicKey, signature) returns (bytes memory) {
-        return  TFHE.reencrypt(players[msg.sender][1], publicKey, 0);
     }
 
     function _reInitiateTable(Table storage _table, uint _tableId) internal {
@@ -300,6 +298,26 @@ contract Poker is EIP712WithModifier {
     }
 
 
+    // function getDeck() public view returns (euint8[] memory) {
+    //     return deck;
+    // }
+
+    // function getDeckLength() public view returns (uint) {
+    //     return deck.length;
+    // }
+
+    // function joinGame() public {
+    //     players[msg.sender].push(deck[deck.length - 2]);
+    //     players[msg.sender].push(deck[deck.length - 1]);
+    // }
+
+    // function checkFirstCard(bytes32 publicKey, bytes calldata signature) public view onlySignedPublicKey(publicKey, signature) returns (bytes memory) {
+    //     return  TFHE.reencrypt(players[msg.sender][0], publicKey, 0);
+    // }
+    // function checkSecondCard(bytes32 publicKey, bytes calldata signature) public view onlySignedPublicKey(publicKey, signature) returns (bytes memory) {
+    //     return TFHE.reencrypt(players[msg.sender][1], publicKey, 0);
+    // }
+
     // function test() public {
     //     euint8 card = TFHE.randEuint8();
     //     if (countPlain == 0) {
@@ -314,6 +332,5 @@ contract Poker is EIP712WithModifier {
     //     }
     //     count = TFHE.add(count, TFHE.asEuint8(1)); // add one
     // }
-
 
 }
