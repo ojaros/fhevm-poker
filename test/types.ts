@@ -18,4 +18,6 @@ export interface Signers {
   admin: SignerWithAddress;
   player1: SignerWithAddress;
   player2: SignerWithAddress;
+  player3: SignerWithAddress;
+  player4: SignerWithAddress;
 }

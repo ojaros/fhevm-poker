@@ -15,13 +15,17 @@ contract Poker is EIP712WithModifier {
     }
 
     address public owner;
-    // euint8 count;
-    // uint8 countPlain;
-
 
     enum TableState {
         Active,
-        Inactive,
+        Inactive
+    }
+
+    enum RoundState {
+        Preflop,
+        Flop,
+        Turn,
+        River,
         Showdown
     }  
 
@@ -38,37 +42,45 @@ contract Poker is EIP712WithModifier {
     event RoundOver(uint tableId, uint round);
     event CommunityCardsDealt(uint tableId, uint roundId, uint8[] cards);
     event TableShowdown(uint tableId);
+    // event DebugPlayerCards(uint256 indexed tableId, uint card1Encrypted, uint card2Encrypted);
+    event DebugPlayerCards(uint256 indexed tableId, euint8 card1Encrypted, euint8 card2Encrypted);
+    event DebugDeck(uint cardEncrypted);
+
 
     struct Table {
-        TableState state;
+        TableState tableState;
         uint totalHands; //total hands till now
-        uint currentRound; // index of curr round
+        uint currentRoundIndex; // index of curr round
         uint buyInAmount;
         uint maxPlayers;
         address[] players;
-        uint pot;
-        uint bigBlind;
+        uint bigBlindAmount;
         IERC20 token; // token used to bet and play
     }
     struct Round {
-        bool state; // state of the round, if active or not
+        RoundState roundState;
+        bool isActive;
         uint turn; // index of the players array, who has the current turn
-        address [] players; // players still in the round (not folded)
+        address [] playersInRound; // players still in the round (not folded)
         uint highestChip; // current highest chip to be called
-        uint[] chips; // array of chips each player has put in, compared with highestChip to see if player has to call again
+        uint[] chipsPlayersHaveBet; // array of chips each player has put in, compared with highestChip to see if player has to call again
+        uint pot; // total chips in the current round
+        uint buttonIndex; // Index for the Button (Dealer) in the players array
     }
     struct PlayerCardsEncrypted {
         euint8 card1Encrypted;
         euint8 card2Encrypted;
     }
+    // struct PlayerCardsEncrypted {
+    //     uint card1Encrypted;
+    //     uint card2Encrypted;
+    // }
     struct PlayerCardsPlainText {
         uint8 card1;
         uint8 card2;
     }
 
-
-    // bool public isTableInitialized = false;
-    uint public totalTables;
+    uint public totalTables = 0;
 
     // id => Table
     mapping(uint => Table) public tables;
@@ -76,6 +88,7 @@ contract Poker is EIP712WithModifier {
     // each tableId maps to a deck
     // tableId => deck
     mapping(uint => euint8[]) public decks;
+    // mapping(uint => uint[]) public decks;
 
     // mapping(address => euint8[]) players;
 
@@ -104,14 +117,13 @@ contract Poker is EIP712WithModifier {
         address [] memory empty;
 
         tables[totalTables] = Table({
-            state: TableState.Inactive,
+            tableState: TableState.Inactive,
             totalHands: 0,
-            currentRound: 0,
+            currentRoundIndex: 0,
             buyInAmount: _buyInAmount, 
             maxPlayers: _maxPlayers,
             players: empty, // initializing with empty dynamic array
-            pot: 0,
-            bigBlind: _bigBlind,
+            bigBlindAmount: _bigBlind,
             token: IERC20(_token)
         });
 
@@ -141,7 +153,7 @@ contract Poker is EIP712WithModifier {
         require(table.players.length < table.maxPlayers, "Table is full");
 
         // transfer player's buy in to contract
-        require(table.token.transferFrom(msg.sender, address(this), _amount));
+        require(table.token.transferFrom(msg.sender, address(this), _amount), "Transfer player's buy in to contract");
         playerChipsRemaining[msg.sender][_tableId] += _amount;
 
         // add player to the table
@@ -153,44 +165,187 @@ contract Poker is EIP712WithModifier {
 
     function dealCards(uint _tableId) public {
         Table storage table = tables[_tableId];
+        require(table.tableState == TableState.Inactive, "Game already going on");
         uint numOfPlayers = table.players.length;
-        require(table.state == TableState.Inactive, "Game already going on");
         require(numOfPlayers > 1, "ERROR : not enough players");
-        table.state = TableState.Active;
+        table.tableState = TableState.Active;
 
         setDeal(_tableId, 2 * numOfPlayers + 5); // assuming 2 cards per player and 5 community cards
 
-        Round storage round = rounds[_tableId][0];
+        Round storage round = rounds[_tableId][table.totalHands];
 
-        round.state = true;
-        round.players = table.players;
-        round.highestChip = table.bigBlind;
+        round.isActive = true;
+        round.roundState = RoundState.Preflop;
+        // TODO: Add logic to handle players at the table, but sitting out this round
+        round.playersInRound = table.players;
+        round.highestChip = table.bigBlindAmount;
+        round.chipsPlayersHaveBet = new uint256[](numOfPlayers);  // Initialize chips array with zeros for each player
+        round.turn = (getBBIndex(_tableId, table.totalHands) + 1) % numOfPlayers;
+
+        PlayerCardsEncrypted[] memory playerCardsEncryptedArray = new PlayerCardsEncrypted[](numOfPlayers);
 
         for (uint i = 0; i < numOfPlayers; i++) {
-            if (i == (numOfPlayers - 1)) { // last player, small blind
-                round.chips[i] = table.bigBlind / 2;
-                playerChipsRemaining[round.players[i]][_tableId] -= table.bigBlind / 2;
-            } else if (i == (numOfPlayers - 2)) { // second to last player, big blind
-                round.chips[i] = table.bigBlind;
-                playerChipsRemaining[round.players[i]][_tableId] -= table.bigBlind;
+            require(i < round.chipsPlayersHaveBet.length, "round.chips out of bounds");
+
+            if (i == (getSBIndex(_tableId, table.totalHands))) { // last player, small blind
+                // Ensure that the operation doesn't lead to underflows
+                require(playerChipsRemaining[round.playersInRound[i]][_tableId] >= table.bigBlindAmount / 2, "Underflow for small blind");
+                
+                round.chipsPlayersHaveBet[i] = table.bigBlindAmount / 2;
+                playerChipsRemaining[round.playersInRound[i]][_tableId] -= table.bigBlindAmount / 2;
+                
+            } else if (i == (getBBIndex(_tableId, table.totalHands))) { // second to last player, big blind
+            
+                // Ensure that the operation doesn't lead to underflows
+                require(playerChipsRemaining[round.playersInRound[i]][_tableId] >= table.bigBlindAmount, "Underflow for big blind");
+                
+                round.chipsPlayersHaveBet[i] = table.bigBlindAmount;
+                playerChipsRemaining[round.playersInRound[i]][_tableId] -= table.bigBlindAmount;
             }
 
+            // Ensure decks[_tableId] has enough elements
+            require(2 * i + 1 < decks[_tableId].length, "decks out of bounds");
+            
             // Save the encrypted card for each player
-            PlayerCardsEncrypted[] memory playerCardsEncrypted;
-            // console.log("Player ", numOfPlayers , " Deck: ", decks[_tableId]);
-            playerCardsEncrypted[i].card1Encrypted = decks[_tableId][2 * i];
-            playerCardsEncrypted[i].card2Encrypted = decks[_tableId][2 * i + 1];
-            playerCardsEncryptedDuringHand[table.players[i]][_tableId][table.totalHands] = playerCardsEncrypted[i];
-            // console.log("Player Cards Encrypted: ", playerCardsEncrypted);
+            playerCardsEncryptedArray[i].card1Encrypted = decks[_tableId][2 * i];
+            playerCardsEncryptedArray[i].card2Encrypted = decks[_tableId][2 * i + 1];
 
-            emit PlayerCardsDealt(playerCardsEncrypted, _tableId); // emit encrypted player cards
+            emit DebugPlayerCards(_tableId, playerCardsEncryptedArray[i].card1Encrypted, playerCardsEncryptedArray[i].card2Encrypted);
+            playerCardsEncryptedDuringHand[table.players[i]][_tableId][table.totalHands] = playerCardsEncryptedArray[i];
+
         }
 
-        table.pot += table.bigBlind + (table.bigBlind / 2);
+        emit PlayerCardsDealt(playerCardsEncryptedArray, _tableId); // emit encrypted player cards for all players at once
+
+        round.pot += table.bigBlindAmount + (table.bigBlindAmount / 2);
 
     }
 
 
+    /// @param _raiseAmount only required in case of raise. Else put zero. This is the amount you are putting in addition to what you have already put in this round
+    function playHand(uint _tableId, PlayerAction _action, uint _raiseAmount) external {
+        Table storage table = tables[_tableId];
+        Round storage round = rounds[_tableId][table.currentRoundIndex];
+
+        require(table.tableState == TableState.Active, "Table is inactive");
+        require(round.isActive, "No active round");
+        require(round.playersInRound[round.turn] == msg.sender, "Not your turn");
+
+        if (_action == PlayerAction.Call) {
+            // in case of calling
+            // deduct chips from user
+            // add chips to pot
+            // keep the player in the round
+
+            uint callAmount = round.highestChip - round.chipsPlayersHaveBet[round.turn];
+
+            playerChipsRemaining[msg.sender][_tableId] -= callAmount;
+            round.pot += callAmount;
+
+        } else if (_action == PlayerAction.Raise) {
+            // in case of raising
+            // deduct chips from the player's account
+            // add those chips to the pot
+            // update the highestChip for the round
+            uint totalAmount = _raiseAmount + round.chipsPlayersHaveBet[round.turn];
+            require(totalAmount > round.highestChip, "Raise amount not enough");
+            require(playerChipsRemaining[msg.sender][_tableId] >= _raiseAmount, "Not enough chips to raise");
+            playerChipsRemaining[msg.sender][_tableId] -= _raiseAmount;
+            round.pot += _raiseAmount;
+            round.highestChip = totalAmount;
+
+        } else if (_action == PlayerAction.Check) {
+            // you can only check if all the other values in the round.chips array is zero
+            // i.e nobody has put any money till now
+            for (uint i =0; i < round.playersInRound.length; i++) {
+                if (round.chipsPlayersHaveBet[i] > 0) {
+                    require(false, "Check not possible");
+                }
+            }
+
+        } else if (_action == PlayerAction.Fold) {
+            // in case of folding
+            /// remove the player from the players & chips array for this round
+            _remove(round.turn, round.playersInRound);
+            _remove(round.turn, round.chipsPlayersHaveBet);
+        }
+
+        _advanceTurn(_tableId);
+    }
+
+
+    function _advanceTurn(uint _tableId) internal {
+        Table storage table = tables[_tableId];
+        require(table.tableState == TableState.Active, "No active round");
+        Round storage round = rounds[_tableId][table.currentRoundIndex];
+        // increment the turn index
+        round.turn = (round.turn + 1) % round.playersInRound.length;
+    }
+
+
+    function showdown(PlayerCardsPlainText[] memory _cards) external {
+        // figure out showdown logic
+    }
+
+    /// @dev method called to update the community cards for the next round
+    /// @param _cards Code of each card(s)
+    function dealCommunityCards(uint _tableId, uint _roundId, uint8[] memory _cards) external {
+        for (uint i=0; i<_cards.length; i++) {
+            communityCards[_tableId].push(_cards[i]);
+        }
+        emit CommunityCardsDealt(_tableId, _roundId, _cards);
+    }
+
+    function _reInitiateTable(Table storage _table, uint _tableId) internal {
+
+        _table.tableState = TableState.Inactive;
+        _table.totalHands += 1;
+        _table.currentRoundIndex = 0;
+        delete communityCards[_tableId]; // delete the community cards of the previous round
+
+        // initiate the first round
+        Round storage round = rounds[_tableId][0];
+        round.isActive = true;
+        round.playersInRound = _table.players;
+        round.highestChip = _table.bigBlindAmount;
+        round.roundState = RoundState.Preflop;
+    } 
+
+    function getSBIndex(uint tableId, uint roundIndex) public view returns(uint) {
+        uint playersCount = tables[tableId].players.length;
+        return (rounds[tableId][roundIndex].buttonIndex + 1) % playersCount;
+    }
+
+    function getBBIndex(uint tableId, uint roundIndex) public view returns(uint) {
+        uint playersCount = tables[tableId].players.length;
+        return (rounds[tableId][roundIndex].buttonIndex + 2) % playersCount;
+    }
+
+    function moveButton(uint tableId, uint roundIndex) internal {
+        uint playersCount = tables[tableId].players.length;
+        rounds[tableId][roundIndex].buttonIndex = (rounds[tableId][roundIndex].buttonIndex + 1) % playersCount;
+    }
+
+    function _remove(uint index, address[] storage arr) internal {
+        arr[index] = arr[arr.length - 1];
+        arr.pop();
+    }
+
+    function _remove(uint index, uint[] storage arr) internal {
+        arr[index] = arr[arr.length - 1];
+        arr.pop();
+    }
+
+    function getRoundPlayersInRound(uint _tableId, uint roundIndex) public view returns (address[] memory) {
+        return rounds[_tableId][roundIndex].playersInRound;
+    }
+
+    function getChipsBetArray(uint _tableId, uint roundIndex) public view returns (uint256[] memory) {
+        return rounds[_tableId][roundIndex].chipsPlayersHaveBet;
+    }
+
+
+    // ------------------------------ DEALING LOGIC ------------------------------------------
     function checkDuplication(euint8 _card, uint _tableId) internal view returns (euint8) {
         euint8 total;
         for (uint8 i = 0; i < decks[_tableId].length; i++) {
@@ -202,100 +357,99 @@ contract Poker is EIP712WithModifier {
 
     function dealCard(uint _tableId) public {
         euint8 card = TFHE.randEuint8();
+        require(TFHE.decrypt(card) >= 0 && TFHE.decrypt(card) <= 52, "Card not in valid range");
+        // require(card == TFHE.randEuint8(), "Card does not exist");
         if (decks[_tableId].length == 0) {
             decks[_tableId].push(card);
         } else if (TFHE.decrypt(checkDuplication(card, _tableId)) == 0) {
             decks[_tableId].push(card);
         }
+
+        require(decks[_tableId].length > 0, "No cards exist on deck");
     }
 
     function setDeal(uint _tableId, uint256 n) public { //this count is 2n + 5 
         for (uint256 i = 0; i < n; i++) {
             dealCard(_tableId);
         }
-    } 
-
-
-     /// @param _raiseAmount only required in case of raise. Else put zero. This is the amount you are putting in addition to what you have already put in this round
-    function playHand(uint _tableId, PlayerAction _action, uint _raiseAmount) external {
-        Table storage table = tables[_tableId];
-        require(table.state == TableState.Active, "No active round");
-
-        Round storage round = rounds[_tableId][table.currentRound];
-        require(round.players[round.turn] == msg.sender, "Not your turn");
-
-        if (_action == PlayerAction.Call) {
-            // in case of calling
-            // deduct chips from user
-            // add chips to pot
-            // keep the player in the round
-
-            uint callAmount = round.highestChip - round.chips[round.turn];
-
-            playerChipsRemaining[msg.sender][_tableId] -= callAmount;
-            table.pot += callAmount;
-
-        } else if (_action == PlayerAction.Raise) {
-            // in case of raising
-            // deduct chips from the player's account
-            // add those chips to the pot
-            // update the highestChip for the round
-            uint totalAmount = _raiseAmount + round.chips[round.turn];
-            require(totalAmount > round.highestChip, "Raise amount not enough");
-            require(playerChipsRemaining[msg.sender][_tableId] >= _raiseAmount);
-            playerChipsRemaining[msg.sender][_tableId] -= _raiseAmount;
-            table.pot += _raiseAmount;
-            round.highestChip = totalAmount;
-
-        } else if (_action == PlayerAction.Check) {
-            // add check logic
-            
-        } else if (_action == PlayerAction.Fold) {
-            // in case of folding
-            /// remove the player from the players & chips array for this round
-            _remove(round.turn, round.players);
-            _remove(round.turn, round.chips);
-        }
     }
 
 
-    function showdown(PlayerCardsPlainText[] memory _cards) external {
-        // figure out showdown logic
-    }
+    // function dealCard(uint _tableId) internal {
+    //     uint card = uint(keccak256(abi.encodePacked(block.timestamp, msg.sender, _tableId, decks[_tableId].length))) % 52 + 1;
+    //     decks[_tableId].push(card);
+    // }
+    
+    // function setDeal(uint _tableId, uint256 n) public { 
+    //     require(decks[_tableId].length + n <= 52, "Can't deal more cards than available in the deck");
+        
+    //     for (uint256 i = 0; i < n; i++) {
+    //         dealCard(_tableId);
+    //     }
+    // }
+    // ------------------------------ DEALING LOGIC ------------------------------------------
 
-    /// @dev method called to update the community cards for the next round
-    /// @param _cards Code of each card(s), (as per the PokerHandUtils Library)
-    function dealCommunityCards(uint _tableId, uint _roundId, uint8[] memory _cards) external {
-        for (uint i=0; i<_cards.length; i++) {
-            communityCards[_tableId].push(_cards[i]);
-        }
-        emit CommunityCardsDealt(_tableId, _roundId, _cards);
-    }
 
-    function _reInitiateTable(Table storage _table, uint _tableId) internal {
 
-        _table.state = TableState.Inactive;
-        _table.totalHands += 1;
-        _table.currentRound = 0;
-        _table.pot = 0;
-        delete communityCards[_tableId]; // delete the community cards of the previous round
 
-        // initiate the first round
-        Round storage round = rounds[_tableId][0];
-        round.state = true;
-        round.players = _table.players;
-        round.highestChip = _table.bigBlind;
-    } 
+    // ----------------------------- TODO: ACTIVE PLAYER LOGIC -------------------------------
+    // function addPlayer(uint tableId, address newPlayer) external {
+    //     // Add to general list of players
+    //     tables[tableId].players.push(newPlayer);
 
-    function _remove(uint index, address[] storage arr) internal {
-        arr[index] = arr[arr.length - 1];
-        arr.pop();
-    }
+    //     // Add to list of active players for the current hand
+    //     tables[tableId].activePlayers.push(newPlayer);
+    // }
 
-    function _remove(uint index, uint[] storage arr) internal {
-        arr[index] = arr[arr.length - 1];
-        arr.pop();
-    }
+    // function removePlayer(uint tableId, address player) external {
+    //     // Remove from general list of players (you might need a helper to find the index)
+    //     uint index = findPlayerIndex(tableId, player);
+    //     tables[tableId].players[index] = tables[tableId].players[tables[tableId].players.length - 1];
+    //     tables[tableId].players.pop();
+
+    //     // Remove from active players list
+    //     uint activeIndex = findActivePlayerIndex(tableId, player);
+    //     tables[tableId].activePlayers[activeIndex] = tables[tableId].activePlayers[tables[tableId].activePlayers.length - 1];
+    //     tables[tableId].activePlayers.pop();
+
+    //     // Handle button adjustment if the Button left
+    //     if (tables[tableId].buttonIndex == activeIndex) {
+    //         tables[tableId].buttonIndex = activeIndex % tables[tableId].activePlayers.length; // Move button to next player
+    //     }
+    // }
+
+    // function findPlayerIndex(uint tableId, address player) internal view returns(uint) {
+    //     for (uint i = 0; i < tables[tableId].players.length; i++) {
+    //         if (tables[tableId].players[i] == player) {
+    //             return i;
+    //         }
+    //     }
+    //     revert("Player not found");
+    // }
+
+    // function findActivePlayerIndex(uint tableId, address player) internal view returns(uint) {
+    //     for (uint i = 0; i < tables[tableId].activePlayers.length; i++) {
+    //         if (tables[tableId].activePlayers[i] == player) {
+    //             return i;
+    //         }
+    //     }
+    //     revert("Active player not found");
+    // }
+    // ----------------------------- TODO: ACTIVE PLAYER LOGIC -------------------------------
+
+
+
+    // /// @dev Starts a new round on a table
+    // /// @param _tableId the unique id of the table
+    // function startRound(uint _tableId) public {
+    //     Table storage table = tables[_tableId];
+    //     // require(table.state == TableState.Inactive, "Game already going on");
+    //     // uint numOfPlayers = table.players.length;
+    //     // require(numOfPlayers > 1, "ERROR : not enough players");
+    //     table.state = TableState.Active;
+
+    //     dealCards(_tableId);
+    // }
 
 
     // function getDeck() public view returns (euint8[] memory) {
@@ -333,4 +487,4 @@ contract Poker is EIP712WithModifier {
     //     count = TFHE.add(count, TFHE.asEuint8(1)); // add one
     // }
 
-}
+}   
