@@ -53,5 +53,17 @@ export async function getTokensFromFaucet() {
         await axios.get(`http://localhost:6000/faucet?address=${signers[4].address}`);
         await waitForBlock(hre);
       }
+
+      if ((await hre.ethers.provider.getBalance(signers[5].address)).toString() === "0") {
+        console.log("Balance for signer 5 is 0 - getting tokens from faucet");
+        await axios.get(`http://localhost:6000/faucet?address=${signers[5].address}`);
+        await waitForBlock(hre);
+      }
+
+      if ((await hre.ethers.provider.getBalance(signers[6].address)).toString() === "0") {
+        console.log("Balance for signer 6 is 0 - getting tokens from faucet");
+        await axios.get(`http://localhost:6000/faucet?address=${signers[6].address}`);
+        await waitForBlock(hre);
+      }
     }
   }

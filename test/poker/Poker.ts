@@ -31,6 +31,8 @@ describe("Unit tests", function () {
         this.signers.player2 = signers[2];
         this.signers.player3 = signers[3];
         this.signers.player4 = signers[4];
+        this.signers.player5 = signers[5];
+        this.signers.player6 = signers[6];
 
         // wait for deployment block to finish
         await waitForBlock(hre);

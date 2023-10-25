@@ -20,4 +20,6 @@ export interface Signers {
   player2: SignerWithAddress;
   player3: SignerWithAddress;
   player4: SignerWithAddress;
+  player5: SignerWithAddress;
+  player6: SignerWithAddress;
 }

@@ -5,6 +5,8 @@ import type { HardhatUserConfig } from "hardhat/config";
 import type { NetworkUserConfig } from "hardhat/types";
 import { resolve } from "path";
 
+import "@nomicfoundation/hardhat-foundry";
+
 import "./tasks/accounts";
 import "./tasks/add";
 import "./tasks/getCount";

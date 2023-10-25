@@ -48,6 +48,8 @@ export function shouldBehaveLikePoker(): void {
             await this.pokerChip.connect(this.signers.admin).transfer(this.signers.player2.address, amountToTransferAndApprove);
             await this.pokerChip.connect(this.signers.admin).transfer(this.signers.player3.address, amountToTransferAndApprove);
             await this.pokerChip.connect(this.signers.admin).transfer(this.signers.player4.address, amountToTransferAndApprove);
+            await this.pokerChip.connect(this.signers.admin).transfer(this.signers.player5.address, amountToTransferAndApprove);
+            await this.pokerChip.connect(this.signers.admin).transfer(this.signers.player6.address, amountToTransferAndApprove);
             await waitForBlock(hre);
             
             const player1Balance = await this.pokerChip.balanceOf(this.signers.player1.address);
@@ -61,6 +63,8 @@ export function shouldBehaveLikePoker(): void {
             await this.pokerChip.connect(this.signers.player2).approve(this.poker.target, amountToTransferAndApprove);
             await this.pokerChip.connect(this.signers.player3).approve(this.poker.target, amountToTransferAndApprove);
             await this.pokerChip.connect(this.signers.player4).approve(this.poker.target, amountToTransferAndApprove);
+            await this.pokerChip.connect(this.signers.player5).approve(this.poker.target, amountToTransferAndApprove);
+            await this.pokerChip.connect(this.signers.player6).approve(this.poker.target, amountToTransferAndApprove);
             await waitForBlock(hre);
 
             // Check the approved amount for the poker contract on behalf of player1 and player2
@@ -160,6 +164,8 @@ export function shouldBehaveLikePoker(): void {
             await this.poker.connect(this.signers.player2).buyIn(0, buyInAmount);
             await this.poker.connect(this.signers.player3).buyIn(0, buyInAmount);
             await this.poker.connect(this.signers.player4).buyIn(0, buyInAmount);
+            await this.poker.connect(this.signers.player5).buyIn(0, buyInAmount);
+            // await this.poker.connect(this.signers.player6).buyIn(0, buyInAmount);
             await waitForBlock(hre);
 
             // Dealer deals initial cards to each player
@@ -169,39 +175,76 @@ export function shouldBehaveLikePoker(): void {
             const table = await this.poker.tables(tableId);
             console.log("TABLE STATE AFTER DEAL: ", table);
 
-            const totalHands = (await this.poker.tables(tableId)).totalHands;
+            const totalHands = (await this.poker.tables(tableId)).totalHandsTillNow;
             const player1EncryptedCards = await this.poker.playerCardsEncryptedDuringHand(this.signers.player1.address, tableId, totalHands);
             const player2EncryptedCards = await this.poker.playerCardsEncryptedDuringHand(this.signers.player2.address, tableId, totalHands);
             const player3EncryptedCards = await this.poker.playerCardsEncryptedDuringHand(this.signers.player3.address, tableId, totalHands);
             const player4EncryptedCards = await this.poker.playerCardsEncryptedDuringHand(this.signers.player4.address, tableId, totalHands);
+            const player5EncryptedCards = await this.poker.playerCardsEncryptedDuringHand(this.signers.player5.address, tableId, totalHands);
+            // const player6EncryptedCards = await this.poker.playerCardsEncryptedDuringHand(this.signers.player6.address, tableId, totalHands);
 
             console.log("PLAYER 1 Encrypted cards: ", player1EncryptedCards)
             console.log("PLAYER 2 Encrypted cards: ", player2EncryptedCards)
             console.log("PLAYER 3 Encrypted cards: ", player3EncryptedCards)
             console.log("PLAYER 4 Encrypted cards: ", player4EncryptedCards)
+            console.log("PLAYER 5 Encrypted cards: ", player5EncryptedCards)
+            // console.log("PLAYER 6 Encrypted cards: ", player6EncryptedCards)
 
             const round = await this.poker.rounds(tableId, 0)
             console.log("ROUND STATE AFTER DEALING CARDS: ", round)
             console.log("ALL PLAYERS : ", await this.poker.getRoundPlayersInRound(tableId, totalHands))
-            console.log("CURRENT PLAYERS TURN : ", round.turn)
             console.log("CHIPS PLAYERS HAVE BET ARRAY : ", await this.poker.getChipsBetArray(tableId, totalHands))
             
-            
             // Betting round 1 (pre-flop)
+            const player4 = await this.poker.rounds(tableId, 0)
+            console.log("CURRENT PLAYERS TURN (Index 3): ", player4.turn)
+            console.log("LAST TO ACT : ", player4.lastToAct)
+            console.log("HIGHEST CHIP : ", player4.highestChip)
             await this.poker.connect(this.signers.player4).playHand(0, PlayerAction.Raise, initialRaiseAmount);  // Player4 raises
             await waitForBlock(hre);
-
+            
+            const player5 = await this.poker.rounds(tableId, 0)
+            console.log("CURRENT PLAYERS TURN (Index 4): ", player5.turn)
+            console.log("LAST TO ACT : ", player5.lastToAct)
+            console.log("HIGHEST CHIP : ", player5.highestChip)
+            await this.poker.connect(this.signers.player5).playHand(0, PlayerAction.Fold, 0);  // Player5 folds
+            await waitForBlock(hre);
+            
+            const player1 = await this.poker.rounds(tableId, 0)
+            console.log("CURRENT PLAYERS TURN (Index 0): ", player1.turn)
+            console.log("LAST TO ACT : ", player1.lastToAct)
+            console.log("HIGHEST CHIP : ", player1.highestChip)
             await this.poker.connect(this.signers.player1).playHand(0, PlayerAction.Call, 0);  // Player1 calls
             await waitForBlock(hre);
-
-            // await this.poker.connect(this.signers.player2).playHand(0, PlayerAction.Fold, 0);  // Player2 folds
-            // await waitForBlock(hre);
-
-            // await this.poker.connect(this.signers.player3).playHand(0, PlayerAction.Call, 0);  // Player3 calls
-            // await waitForBlock(hre);
+            
+            const player2 = await this.poker.rounds(tableId, 0)
+            console.log("CURRENT PLAYERS TURN (Index 1): ", player2.turn)
+            console.log("LAST TO ACT : ", player2.lastToAct)
+            console.log("HIGHEST CHIP : ", player2.highestChip)
+            await this.poker.connect(this.signers.player2).playHand(0, PlayerAction.Fold, 0);  // Player2 folds
+            await waitForBlock(hre);
+            
+            const player3 = await this.poker.rounds(tableId, 0)
+            console.log("CURRENT PLAYERS TURN (Index 2): ", player3.turn)
+            console.log("LAST TO ACT : ", player3.lastToAct)
+            console.log("HIGHEST CHIP : ", player3.highestChip)
+            await this.poker.connect(this.signers.player3).playHand(0, PlayerAction.Call, 0);  // Player3 calls
+            await waitForBlock(hre);
 
             console.log("CHIPS PLAYERS HAVE BET AFTER PREFLOP : ", await this.poker.getChipsBetArray(tableId, totalHands))
             console.log("PLAYERS IN ROUND STILL : ", await this.poker.getRoundPlayersInRound(tableId, totalHands))
+
+            console.log("COMMUNITY CARDS AFTER PREFLOP: ", await this.poker.getCommunityCards(tableId));
+            
+            // // Assuming player1 is first to act postflop
+            // await this.poker.connect(this.signers.player2).playHand(0, PlayerAction.Check, 0);  // Player1 checks
+            // await this.poker.connect(this.signers.player2).playHand(0, PlayerAction.Raise, 20);   // Player2 bets 20
+            // await this.poker.connect(this.signers.player4).playHand(0, PlayerAction.Fold, 0);   // Player4 folds
+            // await this.poker.connect(this.signers.player5).playHand(0, PlayerAction.Call, 20);  // Player5 calls
+            // await this.poker.connect(this.signers.player6).playHand(0, PlayerAction.Raise, 50); // Player6 raises to 50
+            // await this.poker.connect(this.signers.player1).playHand(0, PlayerAction.Fold, 0);   // Player1 folds
+            // await this.poker.connect(this.signers.player2).playHand(0, PlayerAction.Call, 30);  // Player2 calls the raise
+            // await this.poker.connect(this.signers.player5).playHand(0, PlayerAction.Call, 30);  // Player5 calls the raise
 
             // // Assuming dealCommunityCards deals 3 cards on the flop
             // await this.poker.dealCommunityCards(0);
