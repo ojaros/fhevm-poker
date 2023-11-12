@@ -127,6 +127,7 @@ contract Poker is EIP712WithModifier {
     event PlayerCall(uint tableId, address player, uint callAmount);
     event PlayerRaise(uint tableId, address player, uint raiseAmount);
     event LastToActPlayed(uint tableId, address player, RoundState roundState);
+    event RoundTurnIncremented(uint tableId, address player, uint turn);
 
 
     /// @dev Initialize the table, this should only be called once
@@ -289,12 +290,12 @@ contract Poker is EIP712WithModifier {
             round.chipsPlayersHaveBet[round.turn] = totalAmount;
 
             // Set the initial next player to act after the raiser/re-raiser
-            uint lastToActIndex = (round.turn - 1) % round.playersInRound.length;
+            uint lastToActIndex = (round.turn == 0) ? round.playersInRound.length - 1 : round.turn - 1;
             address lastToActPlayer = round.playersInRound[lastToActIndex];
 
             // Find next active player after the raiser/re-raiser
             while (playerStates[_tableId][table.totalHandsTillNow][lastToActPlayer] == PlayerState.Folded || playerStates[_tableId][table.totalHandsTillNow][lastToActPlayer] == PlayerState.AllIn) {
-                lastToActIndex = (lastToActIndex - 1) % round.playersInRound.length;
+                lastToActIndex = (lastToActIndex == 0) ? round.playersInRound.length - 1 : lastToActIndex - 1;
                 lastToActPlayer = round.playersInRound[lastToActIndex];
             }
 
@@ -314,15 +315,13 @@ contract Poker is EIP712WithModifier {
 
         } else if (_action == PlayerAction.Fold) {
             // in case of folding
-            /// remove the player from the players & chips array for this round
+            /// set player's state to Folded
             require(playerStates[_tableId][table.totalHandsTillNow][msg.sender] != PlayerState.Folded, "Player has already folded");
             playerStates[_tableId][table.totalHandsTillNow][msg.sender] = PlayerState.Folded;
-
-            // _remove(round.turn, round.chipsPlayersHaveBet);
         }
 
         require(round.turn < round.playersInRound.length, "Invalid turn value before increment");
-        require(round.turn < round.playersInRound.length, "Invalid turn value after increment");
+
         if (msg.sender == round.lastToAct) {
             emit LastToActPlayed(_tableId, msg.sender, round.roundState);
             advanceRoundState(_tableId);
@@ -354,6 +353,7 @@ contract Poker is EIP712WithModifier {
         // Increment the turn index, skipping folded or all-in players
         do {
             round.turn = (round.turn + 1) % round.playersInRound.length;
+            emit RoundTurnIncremented(_tableId, round.playersInRound[round.turn], round.turn);
         } while(playerStates[_tableId][table.totalHandsTillNow][round.playersInRound[round.turn]] == PlayerState.Folded || playerStates[_tableId][table.totalHandsTillNow][round.playersInRound[round.turn]] == PlayerState.AllIn);
     }
 
@@ -394,13 +394,8 @@ contract Poker is EIP712WithModifier {
         uint activePlayers = countActivePlayers(_tableId);
         require(activePlayers > 1, "Game should end as only one player remains");
 
-        // Setting the next player to act and the last to act for postflop states (flop, turn, river):
-        if (round.roundState != RoundState.Preflop) {
-            _setCurrentTurnAndLastPlayerToAct(_tableId);
-        }
+        _setFirstAndLastPlayerToActAfterRoundStateAdvanced(_tableId);
 
-        // Advance to the next player's turn
-        _advanceTurn(_tableId);
         round.highestChip = 0;
     
         // You might also want to handle the transition from Showdown back to Preflop if another game begins.
@@ -411,32 +406,6 @@ contract Poker is EIP712WithModifier {
         // figure out showdown logic
     }
 
-
-    function _setCurrentTurnAndLastPlayerToAct(uint _tableId) internal {
-        Table storage table = tables[_tableId];
-        Round storage round = rounds[_tableId][table.totalHandsTillNow];
-
-        uint sbIndex = getSBIndex(_tableId, table.totalHandsTillNow);
-        address smallBlindPlayer = round.playersInRound[sbIndex];
-
-        uint lastToActIndex = (sbIndex == 0) ? round.playersInRound.length - 1 : sbIndex - 1;
-        address lastToActPlayer = round.playersInRound[lastToActIndex];
-
-        // Find first active player after the small blind for starting turn
-        while (playerStates[_tableId][table.totalHandsTillNow][smallBlindPlayer] == PlayerState.Folded || playerStates[_tableId][table.totalHandsTillNow][smallBlindPlayer] == PlayerState.AllIn) {
-            sbIndex = (sbIndex + 1) % round.playersInRound.length;
-            smallBlindPlayer = round.playersInRound[sbIndex];
-        }
-
-        // Find last active player to the right of the small blind for lastToAct
-        while (playerStates[_tableId][table.totalHandsTillNow][lastToActPlayer] == PlayerState.Folded || playerStates[_tableId][table.totalHandsTillNow][lastToActPlayer] == PlayerState.AllIn) {
-            lastToActIndex = (lastToActIndex == 0) ? round.playersInRound.length - 1 : lastToActIndex - 1;
-            lastToActPlayer = round.playersInRound[lastToActIndex];
-        }
-
-        round.lastToAct = lastToActPlayer;
-        round.turn = sbIndex; // start the next round with this player
-    }
 
     function _reInitiateTable(Table storage _table, uint _tableId) internal {
 
@@ -473,10 +442,36 @@ contract Poker is EIP712WithModifier {
         rounds[tableId][roundIndex].buttonIndex = (rounds[tableId][roundIndex].buttonIndex + 1) % playersCount;
     }
 
-    // function _remove(uint index, address[] storage arr) internal {
-    //     arr[index] = arr[arr.length - 1];
-    //     arr.pop();
-    // }
+
+    function _setFirstAndLastPlayerToActAfterRoundStateAdvanced(uint _tableId) internal {
+        Table storage table = tables[_tableId];
+        Round storage round = rounds[_tableId][table.totalHandsTillNow];
+
+        uint firstToActIndex = getSBIndex(_tableId, table.totalHandsTillNow);
+        address firstToActPlayer = round.playersInRound[firstToActIndex];
+
+        // Adjust firstToActIndex if the small blind is folded or all in
+        if (playerStates[_tableId][table.totalHandsTillNow][firstToActPlayer] == PlayerState.Folded || playerStates[_tableId][table.totalHandsTillNow][firstToActPlayer] == PlayerState.AllIn) {
+            do {
+                firstToActIndex = (firstToActIndex + 1) % round.playersInRound.length;
+                firstToActPlayer = round.playersInRound[firstToActIndex];
+            } while (playerStates[_tableId][table.totalHandsTillNow][firstToActPlayer] == PlayerState.Folded || playerStates[_tableId][table.totalHandsTillNow][firstToActPlayer] == PlayerState.AllIn);
+        }
+
+        // Determine lastToActIndex
+        uint lastToActIndex = (firstToActIndex == 0) ? round.playersInRound.length - 1 : firstToActIndex - 1;
+        address lastToActPlayer = round.playersInRound[lastToActIndex];
+
+        // Adjust lastToActIndex if necessary
+        while (playerStates[_tableId][table.totalHandsTillNow][lastToActPlayer] == PlayerState.Folded || playerStates[_tableId][table.totalHandsTillNow][lastToActPlayer] == PlayerState.AllIn) {
+            lastToActIndex = (lastToActIndex == 0) ? round.playersInRound.length - 1 : lastToActIndex - 1;
+            lastToActPlayer = round.playersInRound[lastToActIndex];
+        }
+
+        round.lastToAct = lastToActPlayer;
+        round.turn = firstToActIndex; // start the next round with this player
+    }
+
 
     function _remove(uint index, uint[] storage arr) internal {
         arr[index] = arr[arr.length - 1];

@@ -6,7 +6,6 @@ import "fhevm/lib/TFHE.sol";
 import "hardhat/console.sol";
 import {IERC20} from "../interfaces/IERC20.sol";
 import {IDealer} from "../interfaces/IDealer.sol";
-import {IPoker} from "../interfaces/IPoker.sol";
 
 contract Dealer is IDealer, EIP712WithModifier {
     address public owner;
