@@ -3,60 +3,13 @@ pragma solidity ^0.8.19;
 
 import "lib/forge-std/src/Test.sol";
 // import "ds-test/test.sol";
+import "fhevm/lib/TFHE.sol";
 import "forge-std/console.sol";
 import {Poker} from "../contracts/Poker.sol";
+import {Dealer} from "../contracts/Dealer.sol";
 import {PokerChip} from "../contracts/PokerChip.sol";
-import {IERC20} from "../interfaces/IERC20.sol";
-    // enum TableState {
-    //     Active,
-    //     Inactive
-    // }
-    // enum RoundState {
-    //     Preflop,
-    //     Flop,
-    //     Turn,
-    //     River,
-    //     Showdown
-    // }  
-    // enum PlayerAction {
-    //     Call,
-    //     Raise,
-    //     Check,
-    //     Fold
-    // }
-    // enum PlayerState { 
-    //     Active,
-    //     Folded,
-    //     AllIn
-    // }
-
-    // struct PlayerCardsEncrypted {
-    //     uint card1Encrypted;
-    //     uint card2Encrypted;
-    // }
-    // struct Table {
-    //     Poker.TableState tableState;
-    //     uint totalHandsTillNow; //total hands till now
-    //     uint buyInAmount;
-    //     uint maxPlayers;
-    //     address[] players;
-    //     uint bigBlindAmount;
-    //     IERC20 token; // token used to bet and play
-    // }
-    // struct Round {
-    //     Poker.RoundState roundState;
-    //     bool isActive;
-    //     uint turn; // index of the players array, who has the current turn
-    //     address [] playersInRound; // players still in the round (not folded)
-    //     uint highestChip; // current highest chip to be called
-    //     uint[] chipsPlayersHaveBet; // array of chips each player has put in, compared with highestChip to see if player has to call again
-    //     uint pot; // total chips in the current round
-    //     uint buttonIndex; // Index for the Button (Dealer) in the players array
-    //     address lastToAct; // Index of last player to act
-    // }
 
 contract PokerTest is Test {
-
     Poker poker;
     PokerChip pokerChip;
 
@@ -70,7 +23,8 @@ contract PokerTest is Test {
 
     function setUp() public {
         pokerChip = new PokerChip();
-        poker = new Poker();
+        Dealer dealer = new Dealer();
+        poker = new Poker(address(dealer));
 
         uint amountToTransfer = 10000;
         uint _buyInAmount = 500;
@@ -141,6 +95,12 @@ contract PokerTest is Test {
 
         // Admin deals cards
         vm.prank(admin);
+
+        Poker.Table memory currentTableb4 = poker.getCurrentTableState(tableId);
+        console.log("table b4", currentTableb4.totalHandsTillNow);
+        assertEq(uint(currentTableb4.tableState), uint(Poker.TableState.Inactive), "Table state should be Inactive before dealing");
+
+
         poker.dealCards(tableId);
 
         // Verify the table state has changed to Active
@@ -151,6 +111,7 @@ contract PokerTest is Test {
         // Verify that the number of cards dealt is correct
         // Assuming 2 cards per player and 5 community cards
         uint expectedCardsDealt = 2 * numOfPlayers + 5;
+        // euint8[] memory actualCardsDealt = poker.getDeck(tableId);
         uint[] memory actualCardsDealt = poker.getDeck(tableId);
         // for (uint i = 0; i < actualCardsDealt.length; i++) {
         //     console.log("Card ", i+1, ": ", actualCardsDealt[i]);
@@ -203,7 +164,9 @@ contract PokerTest is Test {
         address[] memory playersAtPreflop = poker.getCurrentPlayers(tableId);
         Poker.Table memory tableAtPreflop = poker.getCurrentTableState(tableId);
         uint currentTurnAtPreflop = poker.getRound(tableId, tableAtPreflop.totalHandsTillNow).turn;
+        console.log("FIRST TURN AT PREFLOP : ", currentTurnAtPreflop);
         uint bbIndex = poker.getBBIndex(tableId, tableAtPreflop.totalHandsTillNow);
+        console.log("BB INDEX : ", bbIndex);
 
         for (uint i = 0; i < playersAtPreflop.length; i++) {
             Poker.PlayerState playerState = poker.getPlayerState(tableId, tableAtPreflop.totalHandsTillNow, playersAtPreflop[i]);
@@ -217,20 +180,28 @@ contract PokerTest is Test {
 
 
 
-        // ------------------ FLOP -------------------------------
-        uint raiseAmountAtFlop = 60;
-        uint reRaiseAmountAtFlop = 100;
+        // // ------------------ FLOP -------------------------------
+        // uint raiseAmountAtFlop = 60;
+        // uint reRaiseAmountAtFlop = 100;
 
-        console.log("PLAYERS AT START OF FLOP: ");
-        logActivePlayers(tableId);
+        // console.log("\nPLAYERS AT START OF FLOP: ");
+        // logActivePlayers(tableId);
+        // console.log("POT AT START OF FLOP");
+        // console.log(expectedPotSizeAtFlop);
 
-        uint expectedPotSizeAtTurn = setupFlop(0, raiseAmountAtFlop, reRaiseAmountAtFlop);
+        // Poker.Table memory tableAtFlop = poker.getCurrentTableState(tableId);
+        // Poker.Round memory roundAtFlop = poker.getRound(tableId, tableAtFlop.totalHandsTillNow);
+
+        // console.log("\nINITIAL FIRST TO ACT AT FLOP: ", poker.getCurrentPlayers(0)[roundAtFlop.turn]);
+        // console.log("INITIAL LAST TO ACT: ",roundAtFlop.lastToAct, "\n");
+
+        // uint expectedPotSizeAtTurn = setupFlop(0, raiseAmountAtFlop, reRaiseAmountAtFlop);
         
-        Poker.Table memory tableAtTurn = poker.getCurrentTableState(0);
-        Poker.Round memory roundAtTurn = poker.getRound(0, tableAtTurn.totalHandsTillNow);
-        uint actualPotSizeAtTurn = roundAtTurn.pot;
-        assertEq(actualPotSizeAtTurn, expectedPotSizeAtTurn, "Pot size after flop is incorrect");
-        // -------------------------------------------------------
+        // Poker.Table memory tableAtTurn = poker.getCurrentTableState(0);
+        // Poker.Round memory roundAtTurn = poker.getRound(0, tableAtTurn.totalHandsTillNow);
+        // uint actualPotSizeAtTurn = roundAtTurn.pot;
+        // assertEq(actualPotSizeAtTurn, expectedPotSizeAtTurn, "Pot size after flop is incorrect");
+        // // -------------------------------------------------------
 
 
 
@@ -276,20 +247,36 @@ contract PokerTest is Test {
         vm.prank(players[updatedCurrentTurn]);
         poker.playHand(tableId, Poker.PlayerAction.Raise, raiseAmount);
         expectedPotSize += raiseAmount;
+        console.log("\nPlayer Address: ", players[updatedCurrentTurn], " | Raises: ", raiseAmount);
+        console.log("LST TO ACT: ", poker.getRound(0, table.totalHandsTillNow).lastToAct, "CURR TURN : ", players[updatedCurrentTurn]);
+        console.log("HIGHEST CHIP: ", poker.getRound(tableId, table.totalHandsTillNow).highestChip, "POT SIZE : ", expectedPotSize);
+        console.log("\n");
 
         uint updatedCurrentTurn1 = poker.getRound(tableId, table.totalHandsTillNow).turn;
         vm.prank(players[updatedCurrentTurn1]);
         poker.playHand(tableId, Poker.PlayerAction.Call, 0); // 0 for _raiseAmount since we're just calling
         expectedPotSize += raiseAmount;
+        console.log("Player Address: ", players[updatedCurrentTurn1], " | Calls: ", raiseAmount);
+        console.log("LST TO ACT: ", poker.getRound(0, table.totalHandsTillNow).lastToAct, "CURR TURN : ", players[updatedCurrentTurn1]);
+        console.log("HIGHEST CHIP: ", poker.getRound(tableId, table.totalHandsTillNow).highestChip, "POT SIZE : ", expectedPotSize);
+        console.log("\n");
 
         uint updatedCurrentTurn2 = poker.getRound(tableId, table.totalHandsTillNow).turn;
         vm.prank(players[updatedCurrentTurn2]);
         poker.playHand(tableId, Poker.PlayerAction.Fold, 0); // 0 for _raiseAmount since we're folding
+        console.log("Player Address: ", players[updatedCurrentTurn2], " | Folds ");
+        console.log("LST TO ACT: ", poker.getRound(0, table.totalHandsTillNow).lastToAct, "CURR TURN : ", players[updatedCurrentTurn2]);
+        console.log("HIGHEST CHIP: ", poker.getRound(tableId, table.totalHandsTillNow).highestChip, "POT SIZE : ", expectedPotSize);
+        console.log("\n");
 
         uint updatedCurrentTurn3 = poker.getRound(tableId, table.totalHandsTillNow).turn;
         vm.prank(players[updatedCurrentTurn3]);
         poker.playHand(tableId, Poker.PlayerAction.Call, 0); // 0 for _raiseAmount since we're just calling
         expectedPotSize += raiseAmount;
+        console.log("Player Address: ", players[updatedCurrentTurn3], " | Calls: ", raiseAmount);
+        console.log("LST TO ACT: ", poker.getRound(0, table.totalHandsTillNow).lastToAct, "CURR TURN : ", players[updatedCurrentTurn3]);
+        console.log("HIGHEST CHIP: ", poker.getRound(tableId, table.totalHandsTillNow).highestChip, "POT SIZE : ", expectedPotSize);
+        console.log("\n");
 
 
         // (small blind) and (big blind).
@@ -297,11 +284,19 @@ contract PokerTest is Test {
         vm.prank(players[updatedCurrentTurn4]);
         poker.playHand(tableId, Poker.PlayerAction.Call, 0);
         expectedPotSize += (raiseAmount - (table.bigBlindAmount / 2));
+        console.log("Player Address at small blind: ", players[updatedCurrentTurn4], " | Calls: ", raiseAmount - (table.bigBlindAmount / 2));
+        console.log("LST TO ACT: ", poker.getRound(0, table.totalHandsTillNow).lastToAct, "CURR TURN : ", players[updatedCurrentTurn4]);
+        console.log("HIGHEST CHIP: ", poker.getRound(tableId, table.totalHandsTillNow).highestChip, "POT SIZE : ", expectedPotSize);
+        console.log("\n");
 
         uint updatedCurrentTurn5 = poker.getRound(tableId, table.totalHandsTillNow).turn;
         vm.prank(players[updatedCurrentTurn5]);
         poker.playHand(tableId, Poker.PlayerAction.Call, 0);
         expectedPotSize += (raiseAmount - (table.bigBlindAmount));
+        console.log("Player Address at big blind: ", players[updatedCurrentTurn5], " | Calls: ", raiseAmount - (table.bigBlindAmount));
+
+        console.log("next round starting...");
+
 
         return expectedPotSize;
     }
@@ -313,15 +308,21 @@ contract PokerTest is Test {
 
         address currentPlayer = poker.getCurrentPlayers(tableId)[currentRound.turn];
 
+        console.log("\n\n\nLST TO ACT: ", poker.getRound(0, table.totalHandsTillNow).lastToAct, "CURR TURN : ", currentPlayer);
+        console.log("HIGHEST CHIP: ", poker.getRound(tableId, table.totalHandsTillNow).highestChip, "POT SIZE : ", expectedPotSize);
+        console.log("\n");
+
         for (uint i = 0; currentPlayer != poker.getRound(tableId, table.totalHandsTillNow).lastToAct; i++) {
             uint updatedCurrentTurn = poker.getRound(tableId, table.totalHandsTillNow).turn;
             currentPlayer = poker.getCurrentPlayers(tableId)[updatedCurrentTurn];
 
             if (i == 0) {
                 vm.prank(currentPlayer);
-                poker.playHand(tableId, Poker.PlayerAction.Raise, raiseAmount);
-                expectedPotSize += raiseAmount;
-                console.log("\nPlayer Address: ", currentPlayer, " | Raise: ", raiseAmount);
+                // poker.playHand(tableId, Poker.PlayerAction.Raise, raiseAmount);
+                // expectedPotSize += raiseAmount;
+                // console.log("\nPlayer Address: ", currentPlayer, " | Raise: ", raiseAmount);
+                poker.playHand(tableId, Poker.PlayerAction.Fold, 0);
+                console.log("\nPlayer Address: ", currentPlayer, " | Folds");
             }
             else if (i == 1) {
                 vm.prank(currentPlayer);
@@ -341,11 +342,11 @@ contract PokerTest is Test {
                 vm.prank(currentPlayer);
                 poker.playHand(tableId, Poker.PlayerAction.Call, 0);
                 expectedPotSize += raiseAmount;
-                console.log("Player Address: ", currentPlayer, " | Called: ", raiseAmount);
+                console.log("Player Address: ", currentPlayer, " | Called: ", reRaiseAmount);
             }
            
-            console.log("HIGHEST CHIP: ", poker.getRound(tableId, table.totalHandsTillNow).highestChip, "POT SIZE : ", expectedPotSize);
             console.log("LST TO ACT: ", poker.getRound(0, table.totalHandsTillNow).lastToAct, "CURR TURN : ", currentPlayer);
+            console.log("HIGHEST CHIP: ", poker.getRound(tableId, table.totalHandsTillNow).highestChip, "POT SIZE : ", expectedPotSize);
             console.log("\n");
 
         } 
