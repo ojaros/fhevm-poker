@@ -34,10 +34,10 @@ contract Poker is EIP712WithModifier {
     }  
 
     enum PlayerAction {
-        Call,
-        Raise,
-        ReRaise,
         Check,
+        Call,
+        Bet,
+        Raise,
         Fold
     }
 
@@ -128,6 +128,8 @@ contract Poker is EIP712WithModifier {
     event PlayerRaise(uint tableId, address player, uint raiseAmount);
     event LastToActPlayed(uint tableId, address player, RoundState roundState);
     event RoundTurnIncremented(uint tableId, address player, uint turn);
+    event PlayerAllIn(uint tableId, address player, uint allInAmount);
+
 
 
     /// @dev Initialize the table, this should only be called once
@@ -160,7 +162,7 @@ contract Poker is EIP712WithModifier {
     function withdrawChips(uint _tableId, uint _amount) external {
         require(playerChipsRemaining[msg.sender][_tableId] >= _amount, "Not enough balance");
         playerChipsRemaining[msg.sender][_tableId] -= _amount;
-        require(tables[_tableId].token.transfer(msg.sender, _amount));
+        require(tables[_tableId].token.transfer(msg.sender, _amount), "Player did not transfer correct amount");
     }
 
 
@@ -259,35 +261,85 @@ contract Poker is EIP712WithModifier {
         if (_action == PlayerAction.Call) {
             // in case of calling
             // deduct chips from user
-            // add chips to pot
             // keep the player in the round
 
             uint callAmount = round.highestChip - round.chipsPlayersHaveBet[round.turn];
-            emit PlayerCall(_tableId, round.playersInRound[round.turn], callAmount);
-
             require(callAmount > 0, "Call amount is not positive");
-            require(playerChipsRemaining[msg.sender][_tableId] >= callAmount, "Not enough chips to call");
-            require(round.playersInRound[round.turn] == msg.sender, "Player not expected to act");
-            require(round.chipsPlayersHaveBet[round.turn] <= round.highestChip, "Player has already bet more or equal to the highest bet");
 
+            if (playerChipsRemaining[msg.sender][_tableId] <= callAmount) {
+                // Player goes all in
+                callAmount = playerChipsRemaining[msg.sender][_tableId];
+                playerStates[_tableId][table.totalHandsTillNow][msg.sender] = PlayerState.AllIn;
+                emit PlayerAllIn(_tableId, msg.sender, callAmount);
+            } else {
+                require(playerChipsRemaining[msg.sender][_tableId] >= callAmount, "Not enough chips to call");
+                require(round.chipsPlayersHaveBet[round.turn] <= round.highestChip, "Player has already bet more or equal to the highest bet");
+                emit PlayerCall(_tableId, round.playersInRound[round.turn], callAmount);
+            }
             playerChipsRemaining[msg.sender][_tableId] -= callAmount;
-            // round.pot += callAmount;
             round.chipsPlayersHaveBet[round.turn] += callAmount;
+
+        } else if (_action == PlayerAction.Bet) {
+            // in case of an initial bet
+            // deduct chips from the player's account
+            // add those chips to the pot
+            // update the highestChip for the round
+            uint _betAmount = _raiseAmount;
+
+            require(round.playersInRound[round.turn] == msg.sender, "Not your turn");
+
+            if (_betAmount == playerChipsRemaining[msg.sender][_tableId]) {
+                // Player goes all-in
+                _betAmount = playerChipsRemaining[msg.sender][_tableId];
+                playerStates[_tableId][table.totalHandsTillNow][msg.sender] = PlayerState.AllIn;
+                emit PlayerAllIn(_tableId, msg.sender, _betAmount);
+            } else {
+                require(_betAmount >= table.bigBlindAmount, "Bet amount too low");
+                require(playerChipsRemaining[msg.sender][_tableId] >= _betAmount, "Insufficient balance for bet");
+                // Handle normal bet logic
+                emit PlayerRaise(_tableId, round.playersInRound[round.turn], _betAmount);
+            }
+
+            playerChipsRemaining[msg.sender][_tableId] -= _betAmount;
+            round.chipsPlayersHaveBet[round.turn] = _betAmount;
+            round.highestChip = _betAmount;
+
+            // Set the initial next player to act after the bet
+            uint lastToActIndex = (round.turn == 0) ? round.playersInRound.length - 1 : round.turn - 1;
+            address lastToActPlayer = round.playersInRound[lastToActIndex];
+
+            // Find next active player after the bet
+            while (playerStates[_tableId][table.totalHandsTillNow][lastToActPlayer] == PlayerState.Folded || playerStates[_tableId][table.totalHandsTillNow][lastToActPlayer] == PlayerState.AllIn) {
+                lastToActIndex = (lastToActIndex == 0) ? round.playersInRound.length - 1 : lastToActIndex - 1;
+                lastToActPlayer = round.playersInRound[lastToActIndex];
+            }
+
+            round.lastToAct = lastToActPlayer;
 
         } else if (_action == PlayerAction.Raise) {
             // in case of raising
             // deduct chips from the player's account
             // add those chips to the pot
             // update the highestChip for the round
-            uint totalAmount = _raiseAmount + round.chipsPlayersHaveBet[round.turn];
+            uint totalRaiseAmount = _raiseAmount + round.chipsPlayersHaveBet[round.turn];
 
-            require(totalAmount > round.highestChip, "Raise amount not enough");
-            require(playerChipsRemaining[msg.sender][_tableId] >= _raiseAmount, "Not enough chips to raise");
-            emit PlayerRaise(_tableId, round.playersInRound[round.turn], _raiseAmount);
+            if (_raiseAmount == playerChipsRemaining[msg.sender][_tableId]) {
+                // Player goes all-in
+                totalRaiseAmount = playerChipsRemaining[msg.sender][_tableId];
+                playerStates[_tableId][table.totalHandsTillNow][msg.sender] = PlayerState.AllIn;
+                emit PlayerAllIn(_tableId, msg.sender, totalRaiseAmount);
+            } else {
+                uint minRaise = 2 * round.highestChip;
+                require(playerChipsRemaining[msg.sender][_tableId] >= _raiseAmount, "Insufficient balance for raise");
+                require(totalRaiseAmount >= minRaise, "Raise amount too low");
+                emit PlayerRaise(_tableId, round.playersInRound[round.turn], totalRaiseAmount);
+            }
 
             playerChipsRemaining[msg.sender][_tableId] -= _raiseAmount;
-            round.highestChip = totalAmount;
-            round.chipsPlayersHaveBet[round.turn] = totalAmount;
+            round.chipsPlayersHaveBet[round.turn] = totalRaiseAmount;
+
+            round.highestChip = totalRaiseAmount;
+            emit PlayerRaise(_tableId, round.playersInRound[round.turn], _raiseAmount);
 
             // Set the initial next player to act after the raiser/re-raiser
             uint lastToActIndex = (round.turn == 0) ? round.playersInRound.length - 1 : round.turn - 1;
@@ -301,15 +353,12 @@ contract Poker is EIP712WithModifier {
 
             round.lastToAct = lastToActPlayer;
 
-            // round.lastToAct = round.playersInRound[(round.turn - 1 + round.playersInRound.length) % round.playersInRound.length];
-
-        } 
-        else if (_action == PlayerAction.Check) {
+        } else if (_action == PlayerAction.Check) {
             // you can only check if all the other values in the round.chips array is zero
             // i.e nobody has put any money till now
             for (uint i =0; i < round.playersInRound.length; i++) {
                 if (round.chipsPlayersHaveBet[i] > 0) {
-                    require(round.chipsPlayersHaveBet[i] == 0, "Check not possible");
+                    require(round.chipsPlayersHaveBet[i] == 0, "Check not possible after players have bet");
                 }
             }
 
@@ -385,6 +434,8 @@ contract Poker is EIP712WithModifier {
             round.roundState = RoundState.Showdown;
             // Trigger showdown logic
             // showdown();
+        } 
+        else if (round.roundState == RoundState.Showdown) {
             _reInitiateTable(table, _tableId);
         }
 
@@ -408,19 +459,20 @@ contract Poker is EIP712WithModifier {
 
 
     function _reInitiateTable(Table storage _table, uint _tableId) internal {
-
         _table.tableState = TableState.Inactive;
         _table.totalHandsTillNow += 1;
         delete communityCards[_tableId][_table.totalHandsTillNow]; // delete the community cards of the previous round
         delete decks[_tableId][_table.totalHandsTillNow];
 
-        // initiate the first round
-        Round storage round = rounds[_tableId][0];
+        // initiate the round
+        Round storage round = rounds[_tableId][_table.totalHandsTillNow];
         round.isActive = false;
         // TODO: Add logic to handle players that leave the round
         round.playersInRound = _table.players;
         round.highestChip = _table.bigBlindAmount;
-        round.roundState = RoundState.Preflop;
+        for (uint i = 0; i < round.playersInRound.length; i++) {
+            playerStates[_tableId][_table.totalHandsTillNow][round.playersInRound[i]] = PlayerState.Active;
+        }
     } 
 
 
@@ -532,6 +584,11 @@ contract Poker is EIP712WithModifier {
     function getPlayerState(uint tableId, uint totalHands, address playerAddress) public view returns (PlayerState) {
         return playerStates[tableId][totalHands][playerAddress];
     }
+
+    function getPlayerChipsRemaining(uint _tableId, address _player) public view returns (uint) {
+        return playerChipsRemaining[_player][_tableId];
+    }
+
 
 
 
