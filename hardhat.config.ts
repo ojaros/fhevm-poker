@@ -36,7 +36,7 @@ const chainIds = {
   "polygon-mainnet": 137,
   "polygon-mumbai": 80001,
   sepolia: 11155111,
-  // "localfhenix": 5432,
+  "localfhenix": 5432,
 };
 
 function getChainConfig(chain: keyof typeof chainIds): NetworkUserConfig {
@@ -48,8 +48,8 @@ function getChainConfig(chain: keyof typeof chainIds): NetworkUserConfig {
     case "bsc":
       jsonRpcUrl = "https://bsc-dataseed1.binance.org";
       break;
-    // case "localfhenix":
-    //   jsonRpcUrl = "https://fhenode.fhenix.io/new/evm"
+    case "localfhenix":
+      jsonRpcUrl = "https://fhenode.fhenix.io/new/evm"
     default:
       jsonRpcUrl = "https://" + chain + ".infura.io/v3/" + infuraApiKey;
   }
