@@ -6,16 +6,19 @@ import "fhevm/lib/TFHE.sol";
 import "hardhat/console.sol";
 import {IERC20} from "../interfaces/IERC20.sol";
 import {IDealer} from "../interfaces/IDealer.sol";
+import {Evaluator7} from "./Evaluator7.sol";
 
 
 contract Poker is EIP712WithModifier {
 
     address public owner;
     IDealer public dealer;
+    address public immutable EVALUATOR7;
 
-    constructor(address _dealerAddress) EIP712WithModifier("Authorization token", "1") {
+    constructor(address _dealerAddress, address _evaluator7) EIP712WithModifier("Authorization token", "1") {
         owner = msg.sender;   
         dealer = IDealer(_dealerAddress);
+        EVALUATOR7 = _evaluator7;
     }
 
 
@@ -129,6 +132,8 @@ contract Poker is EIP712WithModifier {
     event LastToActPlayed(uint tableId, address player, RoundState roundState);
     event RoundTurnIncremented(uint tableId, address player, uint turn);
     event PlayerAllIn(uint tableId, address player, uint allInAmount);
+    event ShowdownStarting(uint tableId, uint[] communityCards, uint potSize);
+    event PlayersCards(PlayerCardsEncrypted, uint _tableId);
 
 
 
@@ -433,10 +438,12 @@ contract Poker is EIP712WithModifier {
         else if(round.roundState == RoundState.River) {
             round.roundState = RoundState.Showdown;
             // Trigger showdown logic
-            // showdown();
+            emit ShowdownStarting(_tableId, communityCards[_tableId][table.totalHandsTillNow], round.pot);
+            showdown(_tableId);
         } 
-        else if (round.roundState == RoundState.Showdown) {
-            _reInitiateTable(table, _tableId);
+        // else if (round.roundState == RoundState.Showdown) {
+        //     emit ShowdownStarting(_tableId, communityCards[_tableId][table.totalHandsTillNow], round.pot);
+             // _reInitiateTable(table, _tableId);
         }
 
         emit RoundStateAdvanced(_tableId, round.roundState, round.pot);
@@ -453,8 +460,61 @@ contract Poker is EIP712WithModifier {
     }
 
 
-    function showdown(PlayerCardsPlainText[] memory _cards) external {
-        // figure out showdown logic
+    function showdown(uint _tableId) internal {
+        Table storage table = tables[_tableId];
+        Round memory round = rounds[_tableId][table.totalHandsTillNow];
+
+        require(round.roundState == RoundState.Showdown, "Round State is not showdown");
+
+        uint n = round.playersInRound.length;
+
+        // verify the player hashes
+        // for (uint i=0; i<n;i++) {
+
+            // bytes32 givenHash1 = keccak256(abi.encodePacked(_keys[i], _cards[i].card1));
+            // bytes32 givenHash2 = keccak256(abi.encodePacked(_keys[i], _cards[i].card2));
+
+            // PlayerCardHashes memory hashes = playerHashes[round.players[i]][_tableId][table.totalHands];
+
+            // require(hashes.card1Hash == givenHash1, "incorrect cards");
+            // require(hashes.card2Hash == givenHash2, "incorrect cards");
+        // }
+
+        // now choose winner
+        address winner;
+        uint8 bestRank = 100;
+        
+        for (uint j=0; j < n; j++) {
+            address player = table.players[j];
+            emit PlayerCall(0, player, 0);
+
+            if (playerStates[_tableId][table.totalHandsTillNow][player] != PlayerState.Folded) {
+                emit PlayersCards(playerCardsEncryptedDuringHand[player][_tableId][table.totalHandsTillNow], _tableId);
+                // PlayerCards memory playerCards = _cards[j];
+            }
+
+            // uint8[] memory cCards = communityCards[_tableId];
+
+            // uint8 rank = Evaluator7(EVALUATOR7).handRank(
+            //     cCards[0],
+            //     cCards[1],
+            //     cCards[2],
+            //     cCards[3],
+            //     cCards[4],
+            //     playerCards.card1,
+            //     playerCards.card2
+            // );
+
+            // if (rank < bestRank) {
+            //     bestRank = rank;
+            //     winner = player;
+            // }
+        }
+
+        // add to the winner's balance
+        // require(winner != address(0), "Winner is zero address");
+        // chips[winner][_tableId] += table.pot;
+        // _reInitiateTable(table, _tableId);
     }
 
 

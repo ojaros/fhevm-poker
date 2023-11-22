@@ -9,9 +9,39 @@ import {Poker} from "../contracts/Poker.sol";
 import {Dealer} from "../contracts/Dealer.sol";
 import {PokerChip} from "../contracts/PokerChip.sol";
 
+import {Evaluator7} from "../contracts/Evaluator7.sol";
+import {DpTables} from "../contracts/DpTables.sol";
+
+import {Flush1} from "../contracts/flush/Flush1.sol";
+import {Flush2} from "../contracts/flush/Flush2.sol";
+import {Flush3} from "../contracts/flush/Flush3.sol";
+
+import {NoFlush1} from "../contracts/noFlush/NoFlush1.sol";
+import {NoFlush2} from "../contracts/noFlush/NoFlush2.sol";
+import {NoFlush3} from "../contracts/noFlush/NoFlush3.sol";
+import {NoFlush4} from "../contracts/noFlush/NoFlush4.sol";
+import {NoFlush5} from "../contracts/noFlush/NoFlush5.sol";
+import {NoFlush6} from "../contracts/noFlush/NoFlush6.sol";
+import {NoFlush7} from "../contracts/noFlush/NoFlush7.sol";
+import {NoFlush8} from "../contracts/noFlush/NoFlush8.sol";
+import {NoFlush9} from "../contracts/noFlush/NoFlush9.sol";
+import {NoFlush10} from "../contracts/noFlush/NoFlush10.sol";
+import {NoFlush11} from "../contracts/noFlush/NoFlush11.sol";
+import {NoFlush12} from "../contracts/noFlush/NoFlush12.sol";
+import {NoFlush13} from "../contracts/noFlush/NoFlush13.sol";
+import {NoFlush14} from "../contracts/noFlush/NoFlush14.sol";
+import {NoFlush15} from "../contracts/noFlush/NoFlush15.sol";
+import {NoFlush16} from "../contracts/noFlush/NoFlush16.sol";
+// import {NoFlush17} from "../contracts/noFlush/NoFlush17.sol";
+
 contract PokerTest is Test {
     Poker poker;
     PokerChip pokerChip;
+    Dealer dealer;
+
+    DpTables dpTables;
+
+    Evaluator7 evaluator;
 
     address admin = address(this);
     address alice = makeAddr("alice");
@@ -23,8 +53,47 @@ contract PokerTest is Test {
 
     function setUp() public {
         pokerChip = new PokerChip();
-        Dealer dealer = new Dealer();
-        poker = new Poker(address(dealer));
+        dealer = new Dealer();
+
+        dpTables = new DpTables();
+
+        Flush1 flush1 = new Flush1();
+        Flush2 flush2 = new Flush2();
+        Flush3 flush3 = new Flush3();
+
+        NoFlush1 noFlush1 = new NoFlush1();
+        NoFlush2 noFlush2 = new NoFlush2();
+        NoFlush3 noFlush3 = new NoFlush3();
+        NoFlush4 noFlush4 = new NoFlush4();
+        NoFlush5 noFlush5 = new NoFlush5();
+        NoFlush6 noFlush6 = new NoFlush6();
+        NoFlush7 noFlush7 = new NoFlush7();
+        NoFlush8 noFlush8 = new NoFlush8();
+        NoFlush9 noFlush9 = new NoFlush9();
+        NoFlush10 noFlush10 = new NoFlush10();
+        NoFlush11 noFlush11 = new NoFlush11();
+        NoFlush12 noFlush12 = new NoFlush12();
+        NoFlush13 noFlush13 = new NoFlush13();
+        NoFlush14 noFlush14 = new NoFlush14();
+        NoFlush15 noFlush15 = new NoFlush15();
+        NoFlush16 noFlush16 = new NoFlush16();
+        // NoFlush17 noFlush17 = new NoFlush17();
+
+        evaluator = new Evaluator7(
+            address(dpTables), 
+            [address(flush1), address(flush2), address(flush3)],
+            [
+                address(noFlush1), address(noFlush2), address(noFlush3), 
+                address(noFlush4), address(noFlush5), address(noFlush6), 
+                address(noFlush7), address(noFlush8), address(noFlush9), 
+                address(noFlush10), address(noFlush11), address(noFlush12), 
+                address(noFlush13), address(noFlush14), address(noFlush15), 
+                address(noFlush16)
+            ]
+        );
+        
+
+        poker = new Poker(address(dealer), address(evaluator));
 
         uint amountToTransfer = 10000;
         uint _buyInAmount = 500;
@@ -233,10 +302,10 @@ contract PokerTest is Test {
         uint expectedPotSizeAtShowdown = setUpRiver(0, raiseAmountAtRiver, poker.getCurrentPlayers(0));
         console.log("END OF RIVER... CHECK POT SIZE IS ACCURATE ");
         
-        // Poker.Table memory tableAtShowdown = poker.getCurrentTableState(0);
-        // Poker.Round memory roundAtShowdown = poker.getRound(0, tableAtShowdown.totalHandsTillNow);
-        // uint actualPotSizeAtShowdown = roundAtShowdown.pot;
-        // console.log("ACTUAL POT : ", actualPotSizeAtShowdown);
+        Poker.Table memory tableAtShowdown = poker.getCurrentTableState(0);
+        Poker.Round memory roundAtShowdown = poker.getRound(0, tableAtShowdown.totalHandsTillNow);
+        uint actualPotSizeAtShowdown = roundAtShowdown.pot;
+        console.log("ACTUAL POT : ", actualPotSizeAtShowdown);
         // console.log("expected POT : ", expectedPotSizeAtShowdown);
         // assertEq(actualPotSizeAtShowdown, expectedPotSizeAtShowdown, "Pot size after river is incorrect"); 
         // -------------------------------------------------------
